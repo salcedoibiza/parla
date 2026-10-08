@@ -523,6 +523,10 @@ button.row:active { background: var(--bg-2); }
 .banner.accent { background: var(--accent-soft); box-shadow: none; }
 .banner.warn { background: rgba(245, 158, 11, 0.14); box-shadow: none; }
 .banner .grow { flex: 1; min-width: 0; }
+.tr-banner { font-size: 13.5px; line-height: 1.35; padding-top: 8px; padding-bottom: 8px; }
+.tr-banner > svg { color: var(--accent); flex: none; }
+.tr-banner .btn.small { flex: none; }
+.tr-banner .icon-btn { width: 32px; height: 32px; flex: none; margin-right: -4px; }
 
 /* discurso: oyente */
 .stage { padding: 6px 16px 10px; }

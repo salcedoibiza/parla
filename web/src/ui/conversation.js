@@ -3,7 +3,7 @@ import { html } from './h.js';
 import { Icon } from './icons.js';
 import { store, toast, openSheet, goHome } from '../core/store.js';
 import { t } from '../core/i18n.js';
-import { Avatar, Topbar, useEmitter, useBackGuard } from './common.js';
+import { Avatar, Topbar, useEmitter, useBackGuard, LocalTrBanner } from './common.js';
 import { formatCode } from '../core/crypto.js';
 import {
   initialOutput, useSpeakIncoming, useKeepAwake, StatusBanner, MessageItem, LiveBubbles, Composer,
@@ -62,6 +62,7 @@ export function ConversationScreen({ params }) {
       <${OutputSeg} value=${output} onChange=${setOutput} />
     </div>`}
     <${StatusBanner} session=${session} />
+    ${ended || !others.length ? null : html`<${LocalTrBanner} langs=${people.map((p) => p.lang)} />`}
     <div class="body" ref=${scrollRef}>
       ${!session.messages.length && others.length === 0 && !ended ? html`<div class="empty-invite">
         <span class="ic-big"><${Icon} name="chat" size=${30} /></span>

@@ -46,7 +46,16 @@ function mockOcr() {
   };
 }
 
-async function run(label, app) {
+function mockLocal() {
+  const emit = (ev) => window.__parlaNative && window.__parlaNative(ev);
+  const N = window.ParlaNative;
+  N.hasLocalTr = () => true;
+  N.localModels = () => setTimeout(() => emit({ type: 'trmodels', downloaded: ['en', 'es'], downloading: [], supported: ['en', 'es', 'fr'] }), 5);
+  N.localDownload = () => {};
+  N.localTranslate = (id, text, sl, tl) => setTimeout(() => emit({ type: 'localtr', id, ok: true, text: `[L-${tl}] ${text}` }), 20);
+}
+
+async function run(label, app, local = false) {
   console.log(label);
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, locale: 'es-ES', permissions: ['camera'] });
   await ctx.addInitScript(({ mqtt, tr, web }) => {
@@ -56,7 +65,10 @@ async function run(label, app) {
     localStorage.setItem('parla.profile', JSON.stringify({ uid: 'x1', name: 'Ana', lang: 'es', photo: '', photoSmall: '' }));
   }, { mqtt: S.urls.mqtt, tr: S.urls.tr, web: S.urls.web });
   if (app) await ctx.addInitScript(mockOcr);
+  if (local) await ctx.addInitScript(mockLocal);
   const page = await ctx.newPage();
+  // Con la traducción del móvil, Google se simula lento para ver que la del móvil sale antes
+  if (local) await page.route(`${S.urls.tr}**`, async (route) => { await new Promise((r) => setTimeout(r, 1500)); route.continue(); });
   page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
   await page.goto(S.urls.web);
   await page.click('.mode.m-read');
@@ -67,8 +79,14 @@ async function run(label, app) {
   const t0 = Date.now();
   await page.waitForSelector('.live-layer .ov', { timeout: 90000 });
   const firstMs = Date.now() - t0;
+  if (local) {
+    const first = await page.textContent('.live-layer .ov');
+    ok(/\[L-es\]/.test(first) && firstMs < 1500, `primero sale la traducción del móvil (${firstMs} ms): ${first}`);
+    await page.waitForFunction(() => [...document.querySelectorAll('.live-layer .ov')].some((e) => /^\[es\]/.test(e.textContent)), null, { timeout: 8000 });
+    ok(true, 'después la sustituye la de Google');
+  }
   await page.waitForTimeout(700);
-  await page.screenshot({ path: path.join(shots, `47-live-${app ? 'app' : 'web'}.png`) });
+  await page.screenshot({ path: path.join(shots, `47-live-${app ? 'app' : 'web'}${local ? '-local' : ''}.png`) });
   const ovs = await page.$$eval('.live-layer .ov', (els) => els.map((e) => e.textContent));
   ok(ovs.length >= 2, `traducción sobre la cámara (${ovs.length} bloques, primera en ${firstMs} ms)`);
   console.log('    ', ovs.join(' | '));
@@ -92,6 +110,7 @@ async function run(label, app) {
 
 await run('Web (Tesseract)', false);
 await run('App (lector de Google simulado)', true);
+await run('App con la traducción del móvil (Google lento)', true, true);
 await browser.close();
 await S.close();
 console.log(fails ? `${fails} FALLOS` : 'TODO OK');

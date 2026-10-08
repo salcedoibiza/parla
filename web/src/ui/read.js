@@ -9,6 +9,7 @@ import {
   recognize, recognizeNative, nativeOcrSupports, hasNativeOcr, warmUpNativeOcr,
 } from '../core/ocr.js';
 import { translate, detectedLang } from '../core/translate.js';
+import { canLocal, translateLocal, mlCode } from '../core/localtr.js';
 import { lang as langInfo, trCode } from '../core/langs.js';
 import { copy, share } from '../core/native.js';
 import { log } from '../core/log.js';
@@ -169,9 +170,22 @@ export function ReadScreen() {
       const hit = mem.find(p.text);
       if (hit) { p.tr = hit.tr; p.src = hit.src; continue; }
       p.tr = null;
+      // Idioma del texto: el elegido o el que ha reconocido el lector de Google
+      const psl = sl !== 'auto' ? sl : p.lang;
+      if (psl && mlCode(psl) === mlCode(tl)) { p.tr = p.text; p.src = psl; continue; }
+      // Primero la traducción del propio móvil (al momento); luego la de Google, más precisa, la sustituye
+      if (psl && canLocal(psl, tl)) {
+        translateLocal(p.text, psl, tl, 2000).then((tr) => {
+          if (p.done || !tr) return;
+          p.tr = tr;
+          p.src = psl;
+          if (onLate) onLate();
+        }).catch(() => {});
+      }
       late.push(translate(p.text, sl, tl).then((tr) => {
+        p.done = true;
         p.tr = tr;
-        p.src = detectedLang(p.text);
+        p.src = detectedLang(p.text) || psl;
         mem.add(p.text, tr, p.src);
         if (onLate) onLate();
       }).catch(() => {}));

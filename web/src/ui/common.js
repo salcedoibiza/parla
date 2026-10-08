@@ -3,7 +3,8 @@ import { html } from './h.js';
 import { Icon } from './icons.js';
 import { store, subscribe, closeSheet, toast } from '../core/store.js';
 import { t, uiLangId } from '../core/i18n.js';
-import { LANGS, localName, lang as langInfo } from '../core/langs.js';
+import { LANGS, localName, lang as langInfo, trCode } from '../core/langs.js';
+import { hasLocalTr, onModels, refreshModels, modelsState, missingFor, downloadModel, mlCode } from '../core/localtr.js';
 import { qrPath } from '../core/qr.js';
 import { startCamera, stopCamera, photoFromFile, photoFromVideo } from '../core/media.js';
 import { isApp, openAppSettings } from '../core/native.js';
@@ -248,4 +249,55 @@ export function PhotoSheet({ onPick, hasPhoto }) {
 
 export function Spinner({ size = 22 }) {
   return html`<span class="spinner" style=${`width:${size}px;height:${size}px`}></span>`;
+}
+
+// ---------- traducción en el móvil ----------
+/** Nombre de un idioma del traductor del móvil (p. ej. "it" → "Italiano"). */
+export function trLangName(code) {
+  try {
+    const dn = new Intl.DisplayNames([langInfo(uiLangId()).bcp], { type: 'language' });
+    const n = dn.of(code);
+    if (n && n !== code) return n.charAt(0).toLocaleUpperCase() + n.slice(1);
+  } catch { /* */ }
+  const l = LANGS.find((x) => mlCode(x.tr) === code);
+  return l ? langLabel(l.id) : code;
+}
+
+export function useModels() {
+  const [, force] = useReducer((x) => x + 1, 0);
+  useEffect(() => {
+    if (!hasLocalTr()) return undefined;
+    const off = onModels(() => force());
+    refreshModels();
+    return off;
+  }, []);
+  return modelsState();
+}
+
+const dismissedTr = new Set();
+
+/** Aviso para descargar los idiomas que faltan y que la traducción salga al momento. */
+export function LocalTrBanner({ langs }) {
+  const st = useModels();
+  const [, force] = useReducer((x) => x + 1, 0);
+  if (!hasLocalTr() || !st.ready) return null;
+  const trs = [...new Set(langs.filter(Boolean).map((id) => mlCode(trCode(id))))];
+  // Si todos hablan el mismo idioma no hace falta traducir
+  if (trs.length < 2) return null;
+  const miss = missingFor(trs);
+  const key = miss.join(',');
+  if (!miss.length || dismissedTr.has(key)) return null;
+  const busy = miss.filter((c) => st.downloading.has(c));
+  if (busy.length === miss.length) {
+    return html`<div class="banner accent tr-banner">
+      <${Spinner} size=${18} />
+      <span class="grow">${t('Descargando {langs} para traducir al momento…', { langs: miss.map(trLangName).join(', ') })}</span>
+    </div>`;
+  }
+  return html`<div class="banner accent tr-banner">
+    <${Icon} name="bolt" size=${20} />
+    <span class="grow">${t('Descarga {langs} (unos {mb} MB) y la traducción saldrá al momento, también sin internet.', { langs: miss.map(trLangName).join(', '), mb: miss.length * 30 })}</span>
+    <button class="btn small" onClick=${() => { for (const c of miss) downloadModel(c, false); }}>${t('Descargar')}</button>
+    <button class="icon-btn" aria-label=${t('Cerrar')} onClick=${() => { dismissedTr.add(key); force(); }}><${Icon} name="x" size=${18} /></button>
+  </div>`;
 }

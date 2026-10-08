@@ -3,7 +3,7 @@ import { html } from './h.js';
 import { Icon } from './icons.js';
 import { store, popScreen, openSheet, setSettings, toast, choiceDialog } from '../core/store.js';
 import { t, formatTime } from '../core/i18n.js';
-import { Topbar, langLabel, useBackGuard } from './common.js';
+import { Topbar, langLabel, useBackGuard, LocalTrBanner } from './common.js';
 import { OutputSeg, useKeepAwake } from './session-ui.js';
 import { ListenEngine } from '../core/listen.js';
 import { lang as langInfo, trCode, isRtl } from '../core/langs.js';
@@ -140,6 +140,7 @@ export function ListenScreen() {
       <span class="grow"></span>
       <${OutputSeg} value=${output} onChange=${(v) => { setOutput(v); setSettings({ output: v }); }} />
     </div>
+    <${LocalTrBanner} langs=${[eng.from, to]} />
     <div class="body" ref=${bodyRef}>
       <div class="listen-body">
         ${!segs.length && !eng.partial.text ? html`<div class="empty-invite" style="margin:10px 0">

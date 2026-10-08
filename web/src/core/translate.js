@@ -3,6 +3,7 @@
 // si falla, se prueba a través de Android y después con alternativas gratuitas.
 import { native, onNative } from './native.js';
 import { log } from './log.js';
+import { canLocal, translateLocal } from './localtr.js';
 
 const cache = new Map();
 const inflight = new Map();
@@ -115,8 +116,13 @@ export function warmUp() {
 }
 
 async function doTranslate(src, sl, tl) {
-  const attempts = [() => gtx(src, sl, tl)];
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  const local = canLocal(sl, tl) ? [() => translateLocal(src, sl, tl, 5000)] : [];
+  // Sin conexión, directamente la traducción del móvil
+  const attempts = offline ? [...local] : [];
+  attempts.push(() => gtx(src, sl, tl));
   if (native && !override) attempts.push(() => nativeTranslate(src, sl, tl));
+  if (!offline) attempts.push(...local);
   if (!override) {
     attempts.push(() => chromeDict(src, sl, tl));
     attempts.push(() => myMemory(src, sl, tl));
@@ -194,4 +200,17 @@ export async function translateLines(lines, sl, tl) {
     }
   }
   return result;
+}
+
+/**
+ * Traducción rápida para enseñar al momento: en el móvil si se puede (casi instantánea);
+ * si no, la de Google.
+ */
+export function translateFast(text, sl, tl) {
+  const src = String(text || '').trim();
+  if (!src) return Promise.resolve('');
+  const done = cachedTranslation(src, sl, tl);
+  if (done) return Promise.resolve(done);
+  if (canLocal(sl, tl)) return translateLocal(src, sl, tl, 2500).catch(() => translate(src, sl, tl));
+  return translate(src, sl, tl);
 }

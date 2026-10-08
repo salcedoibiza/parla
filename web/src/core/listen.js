@@ -1,7 +1,8 @@
 // Modo Escucha: oye continuamente (una película, una charla…) y va traduciendo lo que entiende.
 import { Utterance } from './speech.js';
 import { ensureMicPermission, native } from './native.js';
-import { translate } from './translate.js';
+import { translate, translateFast } from './translate.js';
+import { canLocal, translateLocal } from './localtr.js';
 import { lang as langInfo, trCode } from './langs.js';
 import { upsertHistory, flushHistory } from './history.js';
 import { randomId } from './store.js';
@@ -218,7 +219,9 @@ export class ListenEngine {
 
   scheduleProvisional() {
     if (this.trTimer) return;
-    const wait = Math.max(0, 500 - (Date.now() - this.lastTrAt));
+    // Con la traducción del móvil se puede actualizar mucho más a menudo
+    const every = canLocal(this.sl, this.tl) ? 200 : 500;
+    const wait = Math.max(0, every - (Date.now() - this.lastTrAt));
     this.trTimer = setTimeout(async () => {
       this.trTimer = null;
       const text = this.partial.text.trim();
@@ -229,7 +232,7 @@ export class ListenEngine {
       this.lastTrText = text;
       this.lastTrAt = Date.now();
       try {
-        const tr = await translate(text, this.sl, this.tl);
+        const tr = await translateFast(text, this.sl, this.tl);
         if (this.partial.text.trim().startsWith(text.slice(0, Math.min(12, text.length)))) {
           this.partial = { ...this.partial, tr };
           this.onChange();
@@ -249,9 +252,16 @@ export class ListenEngine {
     this.segments.push(seg);
     if (this.segments.length > 400) this.segments = this.segments.slice(-400);
     if (!seg.tr) {
+      // Lo que ya se veía mientras hablaban se mantiene hasta que llegue la traducción buena
+      if (this.partial.tr) { seg.tr = this.partial.tr; seg.prov = true; }
+      if (canLocal(this.sl, this.tl)) {
+        translateLocal(text, this.sl, this.tl, 2000)
+          .then((tr) => { if (!seg.done && tr) { seg.tr = tr; seg.prov = true; this.onChange(); } })
+          .catch(() => {});
+      }
       translate(text, this.sl, this.tl)
-        .then((tr) => { seg.tr = tr; this.onChange(); this.onSegment(seg); this.save(); })
-        .catch(() => { seg.tr = text; seg.failed = true; this.onChange(); this.save(); });
+        .then((tr) => { seg.done = true; seg.tr = tr; seg.prov = false; this.onChange(); this.onSegment(seg); this.save(); })
+        .catch(() => { seg.done = true; if (!seg.tr) { seg.tr = text; seg.failed = true; } seg.prov = false; this.onChange(); this.save(); });
     } else {
       this.onSegment(seg);
       this.save();

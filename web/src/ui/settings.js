@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { html } from './h.js';
 import { Icon, Logo } from './icons.js';
 import {
-  store, setProfile, setSettings, openSheet, popScreen, navigate, toast, ACCENTS, replaceProfile, replaceSettings, closeSheet,
+  store, setProfile, setSettings, openSheet, popScreen, navigate, toast, ACCENTS, replaceProfile, replaceSettings, closeSheet, confirmDialog,
 } from '../core/store.js';
 import { t } from '../core/i18n.js';
-import { Avatar, Topbar, Seg, Sheet, useStore, langLabel, QrCode, CameraView, Spinner } from './common.js';
-import { isApp, openHotspotSettings, openVoiceSettings, share, copy, nativeInfo } from '../core/native.js';
-import { APP_VERSION, inviteLink } from '../core/config.js';
+import { Avatar, Topbar, Seg, Sheet, useStore, langLabel, QrCode, CameraView, Spinner, trLangName } from './common.js';
+import { isApp, openHotspotSettings, openVoiceSettings, share, copy, nativeInfo, openUrl } from '../core/native.js';
+import { hasLocalTr, onModels, refreshModels, modelsState, mlCode, downloadModel, deleteModel } from '../core/localtr.js';
+import { LANGS, trCode } from '../core/langs.js';
+import { APP_VERSION, APK_URL, inviteLink } from '../core/config.js';
 import { clearLogs } from '../core/log.js';
 import { diagText } from '../core/diag.js';
 import { startSending, receiveFrom } from '../core/transfer.js';
@@ -102,18 +104,92 @@ export function SettingsScreen() {
 }
 
 // ---------- idiomas sin conexión ----------
+/** Idiomas de la app que el traductor del móvil sabe traducir (sin repetir variantes). */
+function offlineLangs(supported) {
+  const seen = new Set();
+  const out = [];
+  for (const l of LANGS) {
+    const c = mlCode(l.tr);
+    if (seen.has(c) || !supported.has(c)) continue;
+    seen.add(c);
+    out.push({ code: c, name: trLangName(c) });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function OfflineScreen() {
+  const s = useStore();
+  const [, force] = useState(0);
+  const local = hasLocalTr();
+  useEffect(() => {
+    if (!local) return undefined;
+    const off = onModels(() => force((x) => x + 1));
+    refreshModels();
+    return off;
+  }, []);
+  const st = modelsState();
+  const myCode = mlCode(trCode(s.profile.lang));
+  const all = local && st.ready ? offlineLangs(st.supported) : [];
+  const have = all.filter((l) => st.downloaded.has(l.code));
+  const rest = all.filter((l) => !st.downloaded.has(l.code));
+  // Tu idioma y el inglés primero
+  rest.sort((a, b) => (b.code === myCode) - (a.code === myCode) || (b.code === 'en') - (a.code === 'en'));
+
+  const remove = async (l) => {
+    const yes = await confirmDialog({
+      title: l.name,
+      text: t('¿Borrar este idioma del móvil? Podrás descargarlo otra vez cuando quieras.'),
+      ok: t('Borrar'),
+      cancel: t('Cancelar'),
+      danger: true,
+    });
+    if (yes) deleteModel(l.code);
+  };
+
+  const row = (l) => {
+    const dl = st.downloading.has(l.code);
+    const ok = st.downloaded.has(l.code);
+    return html`<div class="row" key=${l.code}>
+      <span class="ic" style=${ok ? 'color:var(--accent)' : ''}><${Icon} name=${ok ? 'check' : 'globe'} /></span>
+      <span class="txt">
+        <div class="t1">${l.name}</div>
+        <div class="t2">${dl ? t('Descargando…') : ok ? (l.code === 'en' ? t('Hace falta para todos los idiomas') : t('Listo, funciona sin internet')) : t('Unos 30 MB')}</div>
+      </span>
+      <span class="end">
+        ${dl ? html`<${Spinner} size=${20} />` : ok
+    ? (l.code !== 'en' ? html`<button class="icon-btn" aria-label=${t('Borrar')} onClick=${() => remove(l)}><${Icon} name="trash" size=${20} /></button>` : null)
+    : html`<button class="icon-btn" aria-label=${t('Descargar')} onClick=${() => downloadModel(l.code, false)}><${Icon} name="download" size=${20} /></button>`}
+      </span>
+    </div>`;
+  };
+
   return html`<div class="screen">
     <${Topbar} onBack=${popScreen} title=${t('Idiomas sin conexión')} />
     <div class="body"><div class="pad">
-      <div class="info-card accent" style="display:flex;gap:14px;align-items:flex-start">
-        <span style="color:var(--accent)"><${Icon} name="cloudOff" size=${28} /></span>
-        <div><b>${t('Versión de prueba')}</b><br />${t('En esta versión, traducir necesita internet. En la versión completa podrás descargar aquí cada idioma (unos 30 MB) para traducir sin conexión.')}</div>
-      </div>
-      <div class="section-title">${t('Ya funciona sin internet')}</div>
+      ${local ? html`
+        <div class="info-card accent" style="display:flex;gap:14px;align-items:flex-start">
+          <span style="color:var(--accent)"><${Icon} name="bolt" size=${28} /></span>
+          <div>${t('Con los idiomas descargados, la traducción sale al momento y funciona sin internet. Cuando hay conexión, después se mejora con la de Google.')}</div>
+        </div>
+        ${!st.ready ? html`<div style="display:flex;justify-content:center;padding:30px"><${Spinner} /></div>` : html`
+          ${have.length ? html`<div class="section-title">${t('En tu móvil')}</div>
+          <div class="group">${have.map(row)}</div>` : null}
+          <div class="section-title">${t('Para descargar')}</div>
+          <div class="group">${rest.map(row)}</div>
+          <p style="color:var(--text-3);font-size:13.5px;margin-top:12px">${t('El inglés se usa de puente entre idiomas, por eso hace falta siempre. Tu idioma y el inglés se descargan solos cuando estás con wifi.')}</p>
+        `}
+      ` : html`
+        <div class="info-card accent" style="display:flex;gap:14px;align-items:flex-start">
+          <span style="color:var(--accent)"><${Icon} name="cloudOff" size=${28} /></span>
+          <div>${t('En la web, traducir necesita internet. Con la app de Android puedes descargar idiomas para traducir al momento y sin conexión.')}</div>
+        </div>
+        ${!isApp && APK_URL ? html`<button class="btn block" style="margin-top:6px" onClick=${() => openUrl(APK_URL)}><${Icon} name="download" size=${20} />${t('Descargar la app')}</button>` : null}
+      `}
+      <div class="section-title">${t('También funciona sin internet')}</div>
       <div class="group">
         <div class="row"><span class="ic"><${Icon} name="volume" /></span><span class="txt"><div class="t1">${t('Lectura en voz alta')}</div><div class="t2">${t('Usa las voces instaladas en tu móvil.')}</div></span></div>
         <div class="row"><span class="ic"><${Icon} name="mic" /></span><span class="txt"><div class="t1">${t('Dictado por voz')}</div><div class="t2">${t('Si tu móvil tiene descargado el idioma para dictar.')}</div></span></div>
+        ${local ? html`<div class="row"><span class="ic"><${Icon} name="read" /></span><span class="txt"><div class="t1">${t('Modo lectura')}</div><div class="t2">${t('El lector de textos está dentro de la app.')}</div></span></div>` : null}
       </div>
       ${isApp ? html`<button class="btn block ghost" style="margin-top:18px" onClick=${openVoiceSettings}><${Icon} name="download" size=${20} />${t('Descargar voces en el móvil')}</button>` : null}
     </div></div>

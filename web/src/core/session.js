@@ -2,6 +2,7 @@
 import { Channel, brokers, connectFastest } from './transport.js';
 import { deriveSession, randomCode, brokerOf, normalizeCode } from './crypto.js';
 import { translate, cachedTranslation, warmUp } from './translate.js';
+import { canLocal, translateLocal } from './localtr.js';
 import { trCode } from './langs.js';
 import { upsertHistory, flushHistory } from './history.js';
 import { randomId } from './store.js';
@@ -17,7 +18,7 @@ const LIVE_TTL = 8000;
 const LIVE_MS = { conv: 220, talk: 350 };
 const LIVE_TR_MS = { conv: 450, talk: 600 };
 // Cuánto se espera a las traducciones antes de enviar el mensaje final (el resto llega después)
-const FINAL_WAIT_MS = 900;
+const FINAL_WAIT_MS = 300;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class SessionError extends Error {
@@ -44,6 +45,12 @@ class Emitter {
 }
 
 let current = null;
+
+/** De las dos traducciones en directo (Google y la del móvil), la del texto más reciente. */
+function pickLive(e) {
+  if (e.lTr && e.lSeq > e.gSeq) return e.lTr;
+  return e.gTr || e.lTr || '';
+}
 export function currentSession() { return current; }
 
 export class Session extends Emitter {
@@ -75,6 +82,8 @@ export class Session extends Emitter {
     this.liveTimer = null;
     this.changeQueued = false;
     this.colors = new ColorBook();
+    this.localBusy = new Map();
+    this.localWant = new Map();
   }
 
   /** Color propio de cada persona en esta sesión. */
@@ -481,14 +490,50 @@ export class Session extends Emitter {
     else if (l.kind === 'stop') this.live.delete(l.uid);
     else {
       const same = trCode(l.lang || '') === this.myTr;
-      let tr = same ? (l.text || '') : ((l.tr && l.tr[this.myTr]) || '');
-      // Si aún no llegó traducción de este trozo, se mantiene la anterior para que no parpadee
-      if (!tr && prev && prev.tr && !same) tr = prev.tr;
-      this.live.set(l.uid, {
-        uid: l.uid, name: l.name, text: l.text || '', tr, kind: l.kind || 'speech', lang: l.lang, seq: l.seq || 0, ts: Date.now(),
-      });
+      const tseq = l.tseq || 0;
+      const gNew = !same && l.tr && l.tr[this.myTr];
+      const e = {
+        uid: l.uid, name: l.name, text: l.text || '', kind: l.kind || 'speech', lang: l.lang, seq: l.seq || 0, ts: Date.now(), tseq,
+        // Traducción de Google que envía el que habla (puede ir un poco por detrás del texto)
+        gTr: same ? (l.text || '') : (gNew || (prev && prev.gTr) || ''),
+        gSeq: same ? tseq : (gNew ? (l.trs || 0) : (prev ? prev.gSeq : -1)),
+        // Traducción hecha en este móvil (al momento, si está el idioma descargado)
+        lTr: prev ? prev.lTr : '',
+        lSeq: prev ? prev.lSeq : -1,
+      };
+      e.tr = pickLive(e);
+      this.live.set(l.uid, e);
+      if (!same && e.text && e.kind === 'speech' && canLocal(trCode(l.lang || ''), this.myTr)) this.localLive(l.uid);
     }
     this.changed();
+  }
+
+  /** Traduce en este móvil lo que alguien está diciendo (siempre lo más reciente). */
+  localLive(uid) {
+    if (this.localBusy.get(uid)) { this.localWant.set(uid, true); return; }
+    const e = this.live.get(uid);
+    if (!e) return;
+    const { text, tseq } = e;
+    this.localBusy.set(uid, true);
+    translateLocal(text, trCode(e.lang || ''), this.myTr, 2000)
+      .then((tr) => {
+        const cur = this.live.get(uid);
+        if (cur && tseq >= cur.lSeq) {
+          cur.lTr = tr;
+          cur.lSeq = tseq;
+          cur.tr = pickLive(cur);
+          this.changed();
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.localBusy.set(uid, false);
+        if (this.localWant.get(uid)) {
+          this.localWant.set(uid, false);
+          const cur = this.live.get(uid);
+          if (cur && cur.lSeq < cur.tseq) this.localLive(uid);
+        }
+      });
   }
 
   onMessage(m) {
@@ -532,6 +577,12 @@ export class Session extends Emitter {
         .then((txt) => done(txt))
         .catch(() => done(m.text, true));
     };
+    if (!item.own && trCode(m.lang) !== this.myTr && !(m.tr && m.tr[this.myTr]) && canLocal(trCode(m.lang), this.myTr)) {
+      // Mientras llega la de Google, la traducción del móvil al momento
+      translateLocal(m.text, trCode(m.lang), this.myTr, 2000).then((txt) => {
+        if (!finished) { item.provisional = txt; this.changed(); }
+      }).catch(() => {});
+    }
     if (item.own || trCode(m.lang) === this.myTr) done(m.text);
     else if (m.tr && m.tr[this.myTr]) done(m.tr[this.myTr]);
     else if (Array.isArray(m.pending) && m.pending.includes(this.myTr)) {
@@ -681,7 +732,9 @@ export class Session extends Emitter {
       this.ch.publish('l', { t: 'live', uid: this.me.uid, kind: 'stop', ts: Date.now(), seq: ++L.seq }, { qos: 0 });
       return;
     }
-    L.text = (text || '').slice(0, 600);
+    const nt = (text || '').slice(0, 600);
+    if (nt !== L.text) L.textSeq = (L.textSeq || 0) + 1;
+    L.text = nt;
     L.kind = kind;
     if (kind === 'speech' && L.text) this.pumpLiveTranslation();
     this.scheduleLive(force);
@@ -697,7 +750,7 @@ export class Session extends Emitter {
       this.lastLiveSent = Date.now();
       this.ch.publish('l', {
         t: 'live', uid: this.me.uid, name: this.me.name, lang: this.me.lang,
-        text: L.text, kind: L.kind, tr: L.tr, ts: Date.now(), seq: ++L.seq,
+        text: L.text, kind: L.kind, tr: L.tr, trs: L.trSeq || 0, tseq: L.textSeq || 0, ts: Date.now(), seq: ++L.seq,
       }, { qos: 0 });
     };
     if (force || now - this.lastLiveSent >= every) go();
@@ -717,6 +770,7 @@ export class Session extends Emitter {
       return;
     }
     const text = L.text;
+    const textSeq = L.textSeq || 0;
     const gen = L.gen;
     this.liveTrBusy = true;
     this.lastLiveTr = Date.now();
@@ -727,6 +781,7 @@ export class Session extends Emitter {
         if (gen !== L.gen || !this.ch) return;
         L.tr = { ...L.tr, ...tr };
         L.trText = text;
+        L.trSeq = textSeq;
         this.scheduleLive(true);
         if (L.text !== text) this.pumpLiveTranslation();
       });

@@ -3,7 +3,7 @@ import { html } from './h.js';
 import { Icon } from './icons.js';
 import { store, toast, openSheet, goHome, closeSheet } from '../core/store.js';
 import { t, formatTime } from '../core/i18n.js';
-import { Avatar, Topbar, Sheet, useEmitter, useBackGuard, langLabel } from './common.js';
+import { Avatar, Topbar, Sheet, useEmitter, useBackGuard, langLabel, LocalTrBanner } from './common.js';
 import { formatCode } from '../core/crypto.js';
 import {
   initialOutput, useSpeakIncoming, useKeepAwake, StatusBanner, MessageItem, LiveBubbles, Composer,
@@ -138,6 +138,7 @@ function ListenerView({ session }) {
     </div>`}
     <${StatusBanner} session=${session} />
     ${hostGone && !ended ? html`<div class="banner warn"><span class="status-dot warn"></span><span class="grow">${t('El anfitrión se ha desconectado. Esperando…')}</span></div>` : null}
+    ${ended ? null : html`<${LocalTrBanner} langs=${[st.hostLang, myLang]} />`}
     ${canSpeak ? html`<div class="banner accent"><${Icon} name="mic" size=${20} /><span class="grow">${t('Tienes la palabra. Todos te escuchan en su idioma.')}</span></div>` : null}
     <div class="body">
       <div class="stage">

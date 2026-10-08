@@ -2,11 +2,13 @@ import './styles.css';
 import { render } from 'preact';
 import { html } from './ui/h.js';
 import { App, applyTheme, handleBack } from './ui/app.js';
-import { store, emit, navHooks } from './core/store.js';
+import { store, emit, navHooks, subscribe } from './core/store.js';
 import { isApp, onNative, initialLink, systemDark, onSystemThemeChange, nativeInfo } from './core/native.js';
 import { normalizeCode } from './core/crypto.js';
 import { log } from './core/log.js';
 import { APP_VERSION } from './core/config.js';
+import { hasLocalTr, ensureOwnModels, refreshModels } from './core/localtr.js';
+import { trCode } from './core/langs.js';
 
 log('start', APP_VERSION, isApp ? 'app' : 'web', isApp ? JSON.stringify(nativeInfo()) : navigator.userAgent);
 
@@ -57,3 +59,17 @@ render(html`<${App} />`, document.getElementById('app'));
 // Quitar la pantalla de carga
 const splash = document.getElementById('splash');
 if (splash) splash.remove();
+
+// Traducción en el móvil: tu idioma y el inglés se descargan solos (solo con wifi)
+if (hasLocalTr()) {
+  refreshModels();
+  let ownLang = null;
+  const check = () => {
+    const l = store.profile && store.profile.lang;
+    if (!l || l === ownLang) return;
+    ownLang = l;
+    setTimeout(() => ensureOwnModels(trCode(l)), 1500);
+  };
+  subscribe(check);
+  check();
+}
