@@ -70,6 +70,12 @@ public class Bridge {
 
     Ocr ocr;
     VoiceTracker voice;
+    LocalTranslate local;
+
+    LocalTranslate local() {
+        if (local == null) local = new LocalTranslate(this);
+        return local;
+    }
 
     Bridge(MainActivity activity, WebView web) {
         this.activity = activity;
@@ -94,6 +100,33 @@ public class Bridge {
     public void ocr(String id, String dataUrl) {
         if (ocr == null) ocr = new Ocr(this);
         ocr.process(id, dataUrl);
+    }
+
+    // ================= traducción en el móvil (ML Kit) =================
+
+    @JavascriptInterface
+    public boolean hasLocalTr() {
+        return true;
+    }
+
+    @JavascriptInterface
+    public void localModels(final String reqId) {
+        main.post(new Runnable() { public void run() { local().refresh(reqId); } });
+    }
+
+    @JavascriptInterface
+    public void localDownload(final String lang, final boolean wifiOnly) {
+        main.post(new Runnable() { public void run() { local().download(lang, wifiOnly); } });
+    }
+
+    @JavascriptInterface
+    public void localDelete(final String lang) {
+        main.post(new Runnable() { public void run() { local().delete(lang); } });
+    }
+
+    @JavascriptInterface
+    public void localTranslate(final String id, final String text, final String sl, final String tl) {
+        main.post(new Runnable() { public void run() { local().translate(id, text, sl, tl); } });
     }
 
     // ================= tono de voz (modo escucha) =================
@@ -779,6 +812,7 @@ public class Bridge {
         releaseQuiet();
         if (voice != null) voice.stop();
         if (ocr != null) ocr.close();
+        if (local != null) local.close();
         try {
             if (recognizer != null) recognizer.destroy();
         } catch (Exception e) { }

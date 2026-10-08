@@ -56,4 +56,6 @@ android {
 dependencies {
     // Lector de texto de Google (sin conexión, incluido en la app)
     implementation 'com.google.mlkit:text-recognition:16.0.1'
+    // Traducción en el propio móvil (sin conexión); los idiomas se descargan aparte
+    implementation 'com.google.mlkit:translate:17.0.3'
 }
