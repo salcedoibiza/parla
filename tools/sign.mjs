@@ -11,7 +11,8 @@ const sh = (c, o = {}) => execSync(c, { stdio: ['ignore', 'pipe', 'inherit'], ..
 
 sh(`git -C ${site} fetch -q origin apk-build`);
 const tmp = fs.mkdtempSync('/tmp/parla-apk-');
-sh(`git -C ${site} --work-tree=${tmp} checkout origin/apk-build -- .`);
+sh(`git -C ${site} --work-tree=${tmp} checkout FETCH_HEAD -- .`);
+sh(`git -C ${site} reset -q`);
 const status = fs.readFileSync(path.join(tmp, 'STATUS'), 'utf8').trim();
 const src = fs.readFileSync(path.join(tmp, 'SOURCE_SHA'), 'utf8').trim();
 console.log('compilación', status, 'de', src);

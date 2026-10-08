@@ -10,6 +10,7 @@ import { lang as langInfo, trCode, isRtl } from '../core/langs.js';
 import { speak, stopSpeaking, onTts, isSpeaking } from '../core/tts.js';
 import { isApp, openAppSettings, vibrate } from '../core/native.js';
 import { speechSupported } from '../core/speech.js';
+import { SPEAKER_COLORS } from '../core/colors.js';
 
 function errorText(code) {
   switch (code) {
@@ -36,6 +37,11 @@ export function ListenScreen() {
     engRef.current = new ListenEngine({
       from,
       to,
+      voices: store.settings.voices !== false && !store.settings.voicesBlocked,
+      onVoicesBlocked: () => {
+        setSettings({ voicesBlocked: true });
+        toast(t('Este móvil no deja distinguir voces mientras escucha. Lo he desactivado para que la escucha siga funcionando.'), 'info', 5000);
+      },
       onChange: () => force(),
       onError: (code) => {
         if (code === 'permission' && isApp) {
@@ -94,6 +100,15 @@ export function ListenScreen() {
 
   const setSize = (d) => setSettings({ subSize: Math.max(18, Math.min(44, size + d)) });
 
+  const hasVoice = (s) => s && s.voice !== null && s.voice !== undefined;
+  const voiceCls = (s) => (hasVoice(s) ? 'voiced' : '');
+  const voiceStyle = (s) => (hasVoice(s) ? `--sc:${SPEAKER_COLORS[s.voice % SPEAKER_COLORS.length]}` : '');
+  // La etiqueta "Voz N" aparece cuando cambia la voz
+  const voiceTag = (s, prev, always = false) => {
+    if (!hasVoice(s)) return null;
+    if (!always && prev && prev.voice === s.voice) return html`<span class="vdot"></span>`;
+    return html`<span class="vtag"><span class="vdot"></span>${t('Voz {n}', { n: s.voice + 1 })}</span>`;
+  };
   const segs = eng.segments;
   const last = segs[segs.length - 1];
   const older = segs.slice(-40, -1);
@@ -106,7 +121,14 @@ export function ListenScreen() {
       onBack=${() => { eng.stop(); popScreen(); }}
       title=${t('Modo escucha')}
       sub=${eng.running ? (eng.warning === 'network' ? t('Sin conexión, reintentando…') : t('Escuchando…')) : t('En pausa')}
-      right=${html`<div class="size-ctl" role="group" aria-label=${t('Tamaño del texto')}>
+      right=${html`<button class=${`icon-btn ${eng.voicesWanted ? 'voices-on' : ''}`} aria-pressed=${!!eng.voicesWanted}
+        aria-label=${t('Distinguir voces')} onClick=${() => {
+          const on = !eng.voicesWanted;
+          setSettings({ voices: on, voicesBlocked: false });
+          eng.setVoices(on);
+          toast(on ? t('Distinguir voces activado (aproximado, por el tono de voz)') : t('Distinguir voces desactivado'));
+        }}><${Icon} name="users" /></button>
+      <div class="size-ctl" role="group" aria-label=${t('Tamaño del texto')}>
         <button onClick=${() => setSize(-3)} aria-label=${t('Texto más pequeño')}>A</button>
         <button onClick=${() => setSize(3)} aria-label=${t('Texto más grande')}>A</button>
       </div>`} />
@@ -127,12 +149,13 @@ export function ListenScreen() {
             ? t('Acerca el móvil al sonido. Irán apareciendo aquí las frases traducidas.')
             : t('Subtítulos de lo que suena a tu alrededor: una película, la tele, una charla o alguien que habla cerca. No hace falta invitar a nadie. Elige arriba el idioma que se oye, pon el móvil cerca del sonido y pulsa el botón.')}</p>
         </div>` : null}
-        ${voiceOnly ? null : older.map((s) => html`<div class="sub-line" key=${s.id} dir="auto">
-          <div class="t">${formatTime(s.ts)}</div>
+        ${voiceOnly ? null : older.map((s, i) => html`<div class=${`sub-line ${voiceCls(s)}`} key=${s.id} dir="auto" style=${voiceStyle(s)}>
+          <div class="t">${voiceTag(s, older[i - 1])}${formatTime(s.ts)}</div>
           <div style=${rtl ? 'text-align:right' : ''}>${s.tr || html`<span style="color:var(--text-3)">${t('Traduciendo…')}</span>`}</div>
           ${showOrig ? html`<div class="o">${s.text}</div>` : null}
         </div>`)}
-        ${last && !voiceOnly ? html`<div class="sub-line current" key=${last.id} dir="auto">
+        ${last && !voiceOnly ? html`<div class=${`sub-line current ${voiceCls(last)}`} key=${last.id} dir="auto" style=${voiceStyle(last)}>
+          ${hasVoice(last) ? html`<div class="t">${voiceTag(last, older[older.length - 1], true)}</div>` : null}
           <div style=${rtl ? 'text-align:right' : ''}>${last.tr || html`<span style="color:var(--text-3)">${t('Traduciendo…')}</span>`}</div>
           ${showOrig ? html`<div class="o">${last.text}</div>` : null}
         </div>` : null}

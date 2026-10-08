@@ -604,7 +604,7 @@ button.row:active { background: var(--bg-2); }
 
 /* ================= leer ================= */
 .read-screen { background: #000; color: #fff; }
-.read-screen .topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 5; background: linear-gradient(rgba(0, 0, 0, 0.6), transparent); }
+.read-screen .topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 8; background: linear-gradient(rgba(0, 0, 0, 0.6), transparent); }
 .read-screen .topbar .icon-btn { color: #fff; }
 .read-screen .topbar .icon-btn:active { background: rgba(255, 255, 255, 0.15); }
 .lang-pair {
@@ -689,3 +689,26 @@ button.row:active { background: var(--bg-2); }
 .ended-card span { color: var(--text-2); font-size: 14px; }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ================= lectura: explicación inicial ================= */
+.read-intro {
+  position: absolute; inset: 0; z-index: 7; display: flex; align-items: flex-end; justify-content: center;
+  background: rgba(0, 0, 0, 0.45); padding: 16px 14px calc(18px + var(--safe-bottom));
+  animation: fade-in 0.2s ease;
+}
+.read-intro .card {
+  width: 100%; max-width: 440px; background: var(--surface); color: var(--text); border-radius: 26px;
+  padding: 22px 20px 16px; box-shadow: var(--shadow-lg); animation: sheet-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.read-intro h3 { margin: 14px 0 8px; font-size: 20px; letter-spacing: -0.02em; }
+.read-intro p { margin: 0 0 12px; color: var(--text-2); font-size: 15px; line-height: 1.5; }
+.read-intro .btn { margin-top: 6px; }
+.live-layer .ov { transition: left 0.12s linear, top 0.12s linear; }
+
+/* ================= escucha: voces ================= */
+.sub-line.voiced { background: color-mix(in srgb, var(--sc) 7%, var(--surface)); box-shadow: var(--shadow-sm), inset 0 0 0 1px color-mix(in srgb, var(--sc) 25%, transparent); }
+.sub-line.current.voiced { box-shadow: var(--shadow-md), inset 0 0 0 1.5px color-mix(in srgb, var(--sc) 45%, transparent); }
+.sub-line .t { display: flex; align-items: center; gap: 8px; }
+.vtag { display: inline-flex; align-items: center; gap: 6px; color: var(--sc); font-weight: 750; font-size: 12.5px; letter-spacing: 0.01em; }
+.vdot { width: 8px; height: 8px; border-radius: 50%; background: var(--sc); display: inline-block; flex: none; }
+.icon-btn.voices-on { color: var(--accent); background: var(--accent-soft); }

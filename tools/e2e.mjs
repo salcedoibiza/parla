@@ -87,6 +87,12 @@ function mockNative() {
     openHotspotSettings() { window.__hotspot = true; },
     openVoiceSettings() {},
     setQuiet(on) { window.__quiet = on; },
+    voiceStart() { window.__voiceOn = true; return true; },
+    voiceStop() { window.__voiceOn = false; },
+    voiceStats() {
+      const hz = window.__voiceHz || 0;
+      return JSON.stringify({ frames: 100, n: hz ? 30 : 0, median: hz, rms: 0.05, zeroFrac: 0 });
+    },
   };
 }
 
@@ -396,7 +402,7 @@ try {
   console.log('5) Modo Escucha');
   for (let i = 0; i < 5 && !(await ana.$('.modes')); i++) { await ana.click('.topbar .icon-btn'); await ana.waitForTimeout(300); }
   await ana.waitForSelector('.modes');
-  await ana.evaluate(() => { window.__nextPhrase = 'the museum opens at nine'; });
+  await ana.evaluate(() => { window.__nextPhrase = 'the museum opens at nine'; window.__voiceHz = 115; });
   await ana.click('.mode.m-listen');
   await ana.waitForSelector('.listen-btn');
   await shot(ana, '38-listen-empty');
@@ -404,8 +410,14 @@ try {
   await ana.fill('.lang-search input', 'ingl');
   await ana.click('.lang-item >> nth=0');
   await ana.click('.listen-btn');
-  await ana.waitForFunction(() => [...document.querySelectorAll('.sub-line')].some((b) => b.textContent.includes('[es] the museum')), null, { timeout: 10000 });
+  await ana.waitForFunction(() => [...document.querySelectorAll('.sub-line:not(.partial)')].some((b) => b.textContent.includes('[es] the museum')), null, { timeout: 10000 });
   ok(true, 'Escucha traduce lo que oye');
+  // Otra voz (más aguda) dice la siguiente frase
+  await ana.evaluate(() => { window.__nextPhrase = 'tickets cost ten euros'; window.__voiceHz = 215; });
+  await ana.waitForFunction(() => [...document.querySelectorAll('.sub-line')].some((b) => b.textContent.includes('[es] tickets cost')), null, { timeout: 12000 });
+  await ana.waitForTimeout(800);
+  const tags = await ana.$$eval('.vtag', (els) => els.map((e) => e.textContent.trim()));
+  ok(tags.includes('Voz 1') && tags.includes('Voz 2'), `Distingue dos voces: ${tags.join(', ')}`);
   const quiet = await ana.evaluate(() => window.__quiet);
   ok(quiet === true, 'Silencia los pitidos mientras escucha');
   await ana.waitForTimeout(1200);

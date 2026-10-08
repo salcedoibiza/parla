@@ -31,7 +31,7 @@ export async function startServers({ mqttPort = 8883, webPort = 8080, trPort = 8
       const sl = u.searchParams.get('sl');
       const lines = String(q).split('\n').map((l) => (l ? `[${tl}] ${l}` : l)).join('\n');
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify([[[lines, q, null, null, 10]], null, sl]));
+      res.end(JSON.stringify([[[lines, q, null, null, 10]], null, sl === 'auto' ? 'en' : sl]));
     };
     if (req.method === 'OPTIONS') {
       res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' });

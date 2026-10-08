@@ -264,9 +264,15 @@ export class SpeechStream {
     if (!ok) { this.cb.onError && this.cb.onError('permission'); return false; }
     this.active = true;
     this.errors = 0;
+    // Algunos móviles pitan cada vez que empiezan a escuchar: se silencian esos avisos mientras tanto
+    if (native && native.setQuiet) { try { native.setQuiet(true); } catch { /* */ } }
     this.cb.onState && this.cb.onState(true);
     this.loop();
     return true;
+  }
+
+  unquiet() {
+    if (native && native.setQuiet) { try { native.setQuiet(false); } catch { /* */ } }
   }
 
   loop() {
@@ -312,6 +318,7 @@ export class SpeechStream {
   stop() {
     if (!this.active) return;
     this.active = false;
+    this.unquiet();
     this.cb.onState && this.cb.onState(false);
     const u = this.current;
     if (u) {
@@ -322,6 +329,7 @@ export class SpeechStream {
   }
 
   cancel() {
+    if (this.active) this.unquiet();
     this.active = false;
     this.partial = '';
     const u = this.current;

@@ -5,8 +5,10 @@ import { store, toast, popScreen, openSheet, setSettings } from '../core/store.j
 import { t } from '../core/i18n.js';
 import { CameraView, Seg, langLabel, useBackGuard, Spinner } from './common.js';
 import { frameFromVideo, canvasFromFile } from '../core/media.js';
-import { recognize } from '../core/ocr.js';
-import { translateLines } from '../core/translate.js';
+import {
+  recognize, recognizeNative, nativeOcrSupports, hasNativeOcr, warmUpNativeOcr,
+} from '../core/ocr.js';
+import { translate, detectedLang } from '../core/translate.js';
 import { lang as langInfo, trCode } from '../core/langs.js';
 import { copy, share } from '../core/native.js';
 import { log } from '../core/log.js';
@@ -73,28 +75,61 @@ function diff(a, b) {
   return s / a.length;
 }
 
-/** Reconoce y traduce: devuelve { paras:[{text,tr,bbox,lineHeight,colors}], w, h } en coordenadas del lienzo. */
-async function readCanvas(canvas, from, to, onProgress) {
-  const paras = await recognize(canvas, langInfo(from).ocr || 'eng', onProgress);
-  if (!paras.length) return { paras: [], w: canvas.width, h: canvas.height };
-  let trs = paras.map((p) => p.text);
-  if (trCode(from) !== trCode(to)) {
-    const out = await translateLines(paras.map((p) => p.text), trCode(from), trCode(to));
-    trs = out.map((x, i) => x || paras[i].text);
+// Parecido entre dos textos (para no volver a traducir lo que ya se tradujo con pequeñas variaciones)
+function norm(s) { return String(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
+function bigrams(s) {
+  const out = new Map();
+  for (let i = 0; i < s.length - 1; i++) {
+    const g = s.slice(i, i + 2);
+    out.set(g, (out.get(g) || 0) + 1);
   }
-  return {
-    w: canvas.width,
-    h: canvas.height,
-    paras: paras.map((p, i) => ({ ...p, tr: trs[i], colors: sampleColors(canvas, p.bbox) })),
-  };
+  return out;
+}
+function similarity(a, b) {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const A = bigrams(a);
+  const B = bigrams(b);
+  let inter = 0;
+  for (const [g, n] of A) inter += Math.min(n, B.get(g) || 0);
+  return (2 * inter) / (a.length - 1 + b.length - 1);
+}
+
+/** Memoria de traducciones de la sesión de lectura. */
+class Memory {
+  constructor() { this.items = []; }
+  find(text) {
+    const n = norm(text);
+    let best = null;
+    let bestS = 0;
+    for (const it of this.items) {
+      const s = similarity(n, it.n);
+      if (s > bestS) { bestS = s; best = it; }
+    }
+    return bestS >= 0.82 ? best : null;
+  }
+  add(text, tr, src) {
+    this.items.unshift({ n: norm(text), tr, src });
+    if (this.items.length > 80) this.items.length = 80;
+  }
+}
+
+function ocrLangFor(from) {
+  return from === 'auto' ? 'eng' : (langInfo(from).ocr || 'eng');
+}
+
+function fontFor(p, scale) {
+  const w = Math.max(10, (p.bbox.x1 - p.bbox.x0) * scale);
+  const h = Math.max(10, (p.bbox.y1 - p.bbox.y0) * scale);
+  const chars = Math.max(4, (p.tr || p.text).length);
+  const byArea = Math.sqrt((w * h) / (chars * 0.55));
+  return Math.max(9, Math.min(byArea, p.lineHeight * scale * 0.95, 34));
 }
 
 function Overlay({ p, scale, ox = 0, oy = 0 }) {
   const b = p.bbox;
-  const ratio = Math.max(1, (p.tr || '').length / Math.max(1, p.text.length));
-  const fs = Math.max(9, Math.min(30, (p.lineHeight * scale * 0.8) / Math.sqrt(ratio)));
   const c = p.colors || { bg: '#fff', fg: '#111' };
-  return html`<div class="ov" dir="auto" style=${`left:${ox + b.x0 * scale - 2}px;top:${oy + b.y0 * scale - 2}px;width:${(b.x1 - b.x0) * scale + 4}px;min-height:${(b.y1 - b.y0) * scale + 4}px;font-size:${fs}px;background:${c.bg};color:${c.fg}`}>${p.tr}</div>`;
+  return html`<div class="ov" dir="auto" style=${`left:${ox + b.x0 * scale - 2}px;top:${oy + b.y0 * scale - 2}px;width:${(b.x1 - b.x0) * scale + 4}px;min-height:${(b.y1 - b.y0) * scale + 4}px;font-size:${fontFor(p, scale)}px;background:${c.bg};color:${c.fg}`}>${p.tr}</div>`;
 }
 
 export function ReadScreen() {
@@ -106,18 +141,43 @@ export function ReadScreen() {
   const videoRef = useRef(null);
   const fileRef = useRef(null);
   const stageRef = useRef(null);
-  const liveRef = useRef({ result: null, busy: false, ref: null, prev: null, stableSince: 0, moving: false, ready: false, empty: false });
+  const memRef = useRef(new Memory());
+  const liveRef = useRef({ result: null, busy: false, ref: null, prev: null, stableSince: 0, moving: false, ready: false, empty: false, lastStart: 0, emptyCount: 0 });
   const tinyCanvas = useRef(null);
-  const from = store.settings.readFrom || 'en';
+  const nativeOk = hasNativeOcr();
+  const from = store.settings.readFrom || (nativeOk ? 'auto' : 'en');
   const to = store.profile.lang;
+  const useNative = nativeOcrSupports(from === 'auto' ? 'auto' : langInfo(from).ocr);
+  const sl = from === 'auto' ? 'auto' : trCode(from);
+  const tl = trCode(to);
   const stage = useStageSize(stageRef, phase);
-  const fromRef = useRef(from);
-  fromRef.current = from;
+  const showIntro = !store.settings.readIntro;
+
+  useEffect(() => { if (useNative) warmUpNativeOcr(); }, [useNative]);
 
   useBackGuard(() => {
     if (phase === 'result') { setPhase('live'); setResult(null); return true; }
     return false;
   });
+
+  /** Traduce los párrafos; lo ya visto se reutiliza al momento. */
+  const attachTranslations = (paras, onLate) => {
+    const mem = memRef.current;
+    const late = [];
+    for (const p of paras) {
+      if (sl !== 'auto' && sl === tl) { p.tr = p.text; continue; }
+      const hit = mem.find(p.text);
+      if (hit) { p.tr = hit.tr; p.src = hit.src; continue; }
+      p.tr = null;
+      late.push(translate(p.text, sl, tl).then((tr) => {
+        p.tr = tr;
+        p.src = detectedLang(p.text);
+        mem.add(p.text, tr, p.src);
+        if (onLate) onLate();
+      }).catch(() => {}));
+    }
+    return Promise.all(late);
+  };
 
   // ---------- lectura en directo ----------
   useEffect(() => {
@@ -129,47 +189,71 @@ export function ReadScreen() {
       tinyCanvas.current.height = TH;
     }
     let alive = true;
+    const tickMs = useNative ? 120 : 300;
     const iv = setInterval(async () => {
       const v = videoRef.current;
-      if (!alive || !v || !v.videoWidth || document.hidden) return;
+      if (!alive || !v || !v.videoWidth || document.hidden || showIntro) return;
       let cur;
       try { cur = tiny(v, tinyCanvas.current); } catch { return; }
       const now = Date.now();
       const motion = diff(cur, L.prev);
       L.prev = cur;
-      if (motion > 9) { L.stableSince = now; L.moving = true; } else L.moving = false;
-      // Si la imagen ha cambiado respecto a la última lectura, se ocultan las traducciones
-      const changed = diff(cur, L.ref) > 16;
-      if (changed && L.result) { L.result = null; force(); }
-      if (L.busy || L.moving || now - L.stableSince < 450) { force(); return; }
-      if (L.result || (L.empty && !changed)) return;
+      const moving = motion > (useNative ? 14 : 9);
+      if (moving !== L.moving) { L.moving = moving; force(); }
+      if (moving) { L.stableSince = now; return; }
+      if (L.busy) return;
+
+      if (useNative) {
+        // Lector de Google: rápido, se lee continuamente
+        if (now - L.lastStart < 260) return;
+      } else {
+        // Tesseract: más lento, se espera a que la imagen esté quieta y cambie
+        const changed = diff(cur, L.ref) > 16;
+        if (changed && L.result) { L.result = null; force(); }
+        if (now - L.stableSince < 450) return;
+        if (L.result || (L.empty && !changed)) return;
+      }
       L.busy = true;
-      force();
+      L.lastStart = now;
       const refAtStart = cur;
       try {
-        const canvas = frameFromVideo(v, 1100);
-        const res = await readCanvas(canvas, fromRef.current, to, (m) => {
-          if (/load|init/.test(m.status || '') && !L.ready) setStatus({ label: t('Preparando el lector (solo la primera vez)…'), p: m.progress || 0 });
-        });
+        let paras;
+        let canvas;
+        if (useNative) {
+          canvas = frameFromVideo(v, 1280);
+          paras = (await recognizeNative(canvas, 0.8)).paras;
+        } else {
+          force();
+          canvas = frameFromVideo(v, 1100);
+          paras = await recognize(canvas, ocrLangFor(from), (m) => {
+            if (/load|init/.test(m.status || '') && !L.ready) setStatus({ label: t('Preparando el lector (solo la primera vez)…'), p: m.progress || 0 });
+          });
+          setStatus({ label: '', p: 0 });
+        }
         L.ready = true;
-        setStatus({ label: '', p: 0 });
         // Si la cámara se movió mientras leía, se descarta
         const after = tiny(v, tinyCanvas.current);
-        if (alive && diff(after, refAtStart) < 16) {
-          L.ref = refAtStart;
-          L.empty = !res.paras.length;
-          L.result = res.paras.length ? { ...res, vw: v.videoWidth, vh: v.videoHeight } : null;
-        }
+        if (!alive || diff(after, refAtStart) > 18) return;
+        for (const p of paras) p.colors = sampleColors(canvas, p.bbox);
+        const res = { paras, w: canvas.width, h: canvas.height, vw: v.videoWidth, vh: v.videoHeight };
+        if (!useNative) await attachTranslations(paras);
+        else attachTranslations(paras, () => { if (L.result === res) force(); });
+        if (!alive) return;
+        L.ref = refAtStart;
+        L.empty = !paras.length;
+        L.emptyCount = paras.length ? 0 : L.emptyCount + 1;
+        // Con el lector rápido, un fotograma sin texto no borra lo anterior enseguida (evita parpadeos)
+        if (paras.length || !useNative || L.emptyCount > 3) L.result = paras.length ? res : null;
       } catch (e) {
         log('live read failed', e && (e.message || e));
-        setStatus({ label: t('No se pudo preparar el lector. Comprueba tu conexión.'), p: 0 });
+        if (!useNative) setStatus({ label: t('No se pudo preparar el lector. Comprueba tu conexión.'), p: 0 });
       } finally {
         L.busy = false;
         if (alive) force();
       }
-    }, 300);
+    }, tickMs);
     return () => { alive = false; clearInterval(iv); };
-  }, [phase, from]);
+  }, [phase, from, useNative, showIntro]);
 
   useEffect(() => { liveRef.current.result = null; liveRef.current.empty = false; }, [from]);
 
@@ -178,16 +262,25 @@ export function ReadScreen() {
     setPhase('busy');
     setStatus({ label: t('Leyendo el texto…'), p: 0 });
     try {
-      const res = known || await readCanvas(canvas, from, to, (m) => {
-        if (m.status === 'recognizing text') setStatus({ label: t('Leyendo el texto…'), p: m.progress || 0 });
-        else if (/load|init/.test(m.status || '')) setStatus({ label: t('Preparando el lector (solo la primera vez)…'), p: m.progress || 0 });
-      });
-      if (!res.paras.length) {
+      let paras = known;
+      if (!paras) {
+        paras = useNative
+          ? (await recognizeNative(canvas, 0.9)).paras
+          : await recognize(canvas, ocrLangFor(from), (m) => {
+            if (m.status === 'recognizing text') setStatus({ label: t('Leyendo el texto…'), p: m.progress || 0 });
+            else if (/load|init/.test(m.status || '')) setStatus({ label: t('Preparando el lector (solo la primera vez)…'), p: m.progress || 0 });
+          });
+      }
+      if (!paras.length) {
         toast(t('No se ha encontrado texto. Acércate un poco y prueba otra vez.'), 'info', 3500);
         setPhase('live');
         return;
       }
-      setResult({ img: canvas.toDataURL('image/jpeg', 0.9), ...res });
+      for (const p of paras) p.colors = sampleColors(canvas, p.bbox);
+      setStatus({ label: t('Traduciendo…'), p: 1 });
+      await attachTranslations(paras);
+      for (const p of paras) if (!p.tr) p.tr = p.text;
+      setResult({ img: canvas.toDataURL('image/jpeg', 0.9), w: canvas.width, h: canvas.height, paras });
       setView('tr');
       setPhase('result');
     } catch (e) {
@@ -202,36 +295,21 @@ export function ReadScreen() {
   const freeze = () => {
     const v = videoRef.current;
     if (!v || !v.videoWidth) return;
-    const L = liveRef.current;
-    const canvas = frameFromVideo(v, 1600);
-    // Si ya hay una lectura de esta misma imagen, se reutiliza
-    if (L.result && !L.moving) {
-      const k = canvas.width / L.result.w;
-      const scaled = {
-        w: canvas.width,
-        h: canvas.height,
-        paras: L.result.paras.map((p) => ({
-          ...p,
-          lineHeight: p.lineHeight * k,
-          bbox: { x0: p.bbox.x0 * k, y0: p.bbox.y0 * k, x1: p.bbox.x1 * k, y1: p.bbox.y1 * k },
-        })),
-      };
-      process(canvas, scaled);
-    } else {
-      process(canvas);
-    }
+    // Se lee otra vez con más resolución para que el texto congelado sea lo más exacto posible
+    process(frameFromVideo(v, 1800));
   };
 
   const onFile = async (e) => {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    try { process(await canvasFromFile(f)); } catch { toast(t('No se pudo abrir la imagen.'), 'error'); }
+    try { process(await canvasFromFile(f, 2000)); } catch { toast(t('No se pudo abrir la imagen.'), 'error'); }
   };
 
   const pickFrom = () => openSheet('lang', {
     value: from,
     title: t('Idioma del texto'),
+    auto: true,
     filter: (l) => !!l.ocr,
     onPick: (id) => setSettings({ readFrom: id }),
   });
@@ -248,17 +326,25 @@ export function ReadScreen() {
     const oy = (chh - L.result.vh * cover) / 2;
     const scale = cover * (L.result.vw / L.result.w);
     liveLayer = html`<div class=${`live-layer ${L.moving ? 'hide' : ''}`}>
-      ${L.result.paras.map((p, i) => html`<${Overlay} key=${i} p=${p} scale=${scale} ox=${ox} oy=${oy} />`)}
+      ${L.result.paras.filter((p) => p.tr).map((p, i) => html`<${Overlay} key=${i} p=${p} scale=${scale} ox=${ox} oy=${oy} />`)}
     </div>`;
   }
 
+  // Idioma detectado (si se eligió "Detectar idioma")
+  let detected = null;
+  if (from === 'auto') {
+    const ps = (L.result && L.result.paras) || (result && result.paras) || [];
+    const src = ps.map((p) => p.src).find(Boolean);
+    if (src) detected = src;
+  }
+
   let liveStatus = null;
-  if (phase === 'live') {
-    if (status.label) liveStatus = html`<span><${Spinner} size=${14} /></span>${status.label}`;
-    else if (L.busy) liveStatus = html`<${Spinner} size=${14} />${t('Leyendo…')}`;
+  if (phase === 'live' && !showIntro) {
+    if (status.label) liveStatus = html`<${Spinner} size=${14} />${status.label}`;
+    else if (L.busy && !useNative) liveStatus = html`<${Spinner} size=${14} />${t('Leyendo…')}`;
     else if (L.moving && !L.result) liveStatus = t('Mantén el móvil quieto');
     else if (L.empty && !L.result) liveStatus = t('No veo texto. Acércate un poco.');
-    else if (!L.result) liveStatus = t('Apunta a un texto');
+    else if (!L.result) liveStatus = useNative && !L.ready ? html`<${Spinner} size=${14} />${t('Buscando texto…')}` : t('Apunta a un texto');
   }
 
   const fullText = result ? result.paras.map((p) => (view === 'tr' ? p.tr : p.text)).join('\n\n') : '';
@@ -277,10 +363,10 @@ export function ReadScreen() {
       <button class="icon-btn" onClick=${() => (phase === 'result' ? (setPhase('live'), setResult(null)) : popScreen())} aria-label=${t('Atrás')}><${Icon} name="back" /></button>
       <div class="title" style="display:flex;justify-content:center">
         <button class="lang-pair" onClick=${pickFrom}>
-          ${langLabel(from)} <${Icon} name="arrow" size=${16} /> ${langLabel(to)}
+          ${from === 'auto' && detected ? `${langLabel(detected)} ✓` : langLabel(from)} <${Icon} name="arrow" size=${16} /> ${langLabel(to)}
         </button>
       </div>
-      <span style="width:44px"></span>
+      <button class="icon-btn" onClick=${() => setSettings({ readIntro: false })} aria-label=${t('Cómo funciona')}><${Icon} name="info" /></button>
     </div>
 
     ${phase !== 'result' ? html`<div class="read-cam">
@@ -294,6 +380,18 @@ export function ReadScreen() {
         <span style="width:52px"></span>
       </div>
       <input ref=${fileRef} type="file" accept="image/*" class="visually-hidden" onChange=${onFile} />
+    </div>` : null}
+
+    ${showIntro && phase === 'live' ? html`<div class="read-intro">
+      <div class="card">
+        <span class="ic-big" style="background:linear-gradient(140deg,#38bdf8,#0b82d8);box-shadow:0 12px 24px -10px rgba(11,130,216,.55)"><${Icon} name="read" size=${30} /></span>
+        <h3>${t('Modo lectura')}</h3>
+        <p>${nativeOk
+          ? t('Apunta la cámara a cualquier texto (un cartel, un menú, una carta…) y verás la traducción encima, en tu idioma, sin hacer foto. El idioma del texto se detecta solo.')
+          : t('Apunta la cámara a cualquier texto (un cartel, un menú, una carta…) y verás la traducción encima, en tu idioma, sin hacer foto. Arriba puedes elegir el idioma del texto.')}</p>
+        <p>${t('Pulsa el botón central para congelar la imagen y leerla con calma, copiarla o compartirla. También puedes elegir una foto de la galería.')}</p>
+        <button class="btn block" onClick=${() => setSettings({ readIntro: true })}>${t('Entendido')}</button>
+      </div>
     </div>` : null}
 
     ${phase === 'busy' ? html`<div class="busy-overlay">

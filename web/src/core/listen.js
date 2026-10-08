@@ -6,16 +6,25 @@ import { lang as langInfo, trCode } from './langs.js';
 import { upsertHistory, flushHistory } from './history.js';
 import { randomId } from './store.js';
 import { log } from './log.js';
+import { createVoiceTracker, VoiceClusterer, onAppResume } from './voices.js';
 
 const FATAL = new Set(['permission', 'unavailable', 'language']);
 
 export class ListenEngine {
-  constructor({ from, to, onChange, onError, onSegment }) {
+  constructor({ from, to, onChange, onError, onSegment, voices = false, onVoicesBlocked }) {
     this.from = from;
     this.to = to;
     this.onChange = onChange || (() => {});
     this.onError = onError || (() => {});
     this.onSegment = onSegment || (() => {});
+    this.onVoicesBlocked = onVoicesBlocked || (() => {});
+    this.voicesWanted = voices;
+    this.tracker = null;
+    this.trackerOn = false;
+    this.clusterer = new VoiceClusterer();
+    this.segStart = 0;
+    this.lastHeard = 0;
+    this.lastVoice = null;
     this.running = false;
     this.held = false;
     this.segments = [];
@@ -47,19 +56,84 @@ export class ListenEngine {
     this.errors = 0;
     this.warning = '';
     if (native && native.setQuiet) { try { native.setQuiet(true); } catch { /* */ } }
+    if (this.voicesWanted) this.startVoices();
+    this.offResume = onAppResume(() => { if (this.running && this.trackerOn && this.tracker) this.tracker.start(); });
     this.watchdog = setInterval(() => {
       if (this.running && !this.held && Date.now() - this.lastEvent > 20000) {
         log('listen watchdog restart');
         this.restartSoon(0, true);
       }
-    }, 5000);
+      this.checkVoices();
+    }, 3000);
     this.loop();
     this.onChange();
     return true;
   }
 
+  // ---------- voces ----------
+  async startVoices() {
+    if (this.trackerOn) return;
+    this.tracker = this.tracker || createVoiceTracker();
+    if (!this.tracker) return;
+    const ok = await this.tracker.start();
+    if (!ok || !this.running) { if (ok) this.tracker.stop(); return; }
+    this.trackerOn = true;
+    this.trackerStartedAt = Date.now();
+    this.heardSinceTracker = false;
+  }
+
+  stopVoices() {
+    if (this.tracker) this.tracker.stop();
+    this.trackerOn = false;
+  }
+
+  setVoices(on) {
+    this.voicesWanted = on;
+    if (!this.running) return;
+    if (on) this.startVoices(); else this.stopVoices();
+    this.onChange();
+  }
+
+  /**
+   * Comprueba que medir el tono no estorba al reconocimiento de voz.
+   * Algunos móviles no dejan usar el micrófono a la vez desde dos sitios.
+   */
+  checkVoices() {
+    if (!this.trackerOn || !this.tracker || !this.running) return;
+    const now = Date.now();
+    const s = this.tracker.stats(now - 6000, now) || {};
+    // 1) El tono no recibe sonido (el sistema le da silencio) pero el reconocimiento sí oye
+    if (s.frames > 40 && s.zeroFrac > 0.9 && now - this.lastHeard < 6000) {
+      log('voices: tracker silenced');
+      this.blockVoices();
+      return;
+    }
+    // 2) Hay sonido fuerte pero el reconocimiento no oye nada desde que se activó el tono
+    if (!this.heardSinceTracker && now - this.trackerStartedAt > 12000 && s.rms > 0.02) {
+      log('voices: recognizer starved');
+      this.blockVoices();
+      this.restartSoon(0, true);
+    }
+  }
+
+  blockVoices() {
+    this.stopVoices();
+    this.voicesWanted = false;
+    this.onVoicesBlocked();
+    this.onChange();
+  }
+
+  voiceFor(t0, t1) {
+    if (!this.trackerOn || !this.tracker) return null;
+    const s = this.tracker.stats(t0, t1) || {};
+    if ((s.n || 0) >= 5) return this.clusterer.assign(s.median);
+    return this.lastVoice;
+  }
+
   stop() {
     this.running = false;
+    this.stopVoices();
+    if (this.offResume) { this.offResume(); this.offResume = null; }
     clearInterval(this.watchdog);
     clearTimeout(this.restartTimer);
     clearTimeout(this.trTimer);
@@ -96,6 +170,9 @@ export class ListenEngine {
     const u = new Utterance(langInfo(this.from).bcp, {
       onPartial: (p) => {
         this.lastEvent = Date.now();
+        this.lastHeard = Date.now();
+        this.heardSinceTracker = true;
+        if (!this.partial.text) this.segStart = Date.now();
         this.errors = 0;
         this.warning = '';
         this.partial = { ...this.partial, text: p };
@@ -104,6 +181,8 @@ export class ListenEngine {
       },
       onFinal: (f) => {
         this.lastEvent = Date.now();
+        this.lastHeard = Date.now();
+        this.heardSinceTracker = true;
         this.errors = 0;
         if (f && f.trim()) this.commit(f.trim());
         this.partial = { text: '', tr: '' };
@@ -139,7 +218,7 @@ export class ListenEngine {
 
   scheduleProvisional() {
     if (this.trTimer) return;
-    const wait = Math.max(0, 1100 - (Date.now() - this.lastTrAt));
+    const wait = Math.max(0, 500 - (Date.now() - this.lastTrAt));
     this.trTimer = setTimeout(async () => {
       this.trTimer = null;
       const text = this.partial.text.trim();
@@ -160,7 +239,13 @@ export class ListenEngine {
   }
 
   commit(text) {
-    const seg = { id: randomId(5), ts: Date.now(), text, tr: this.sl === this.tl ? text : '', lang: this.from };
+    const now = Date.now();
+    // La voz empieza un poco antes de que llegue el primer texto reconocido
+    const start = (this.segStart || now - 2500) - 700;
+    const voice = this.voiceFor(start, now - 200);
+    this.lastVoice = voice;
+    this.segStart = 0;
+    const seg = { id: randomId(5), ts: now, text, tr: this.sl === this.tl ? text : '', lang: this.from, voice };
     this.segments.push(seg);
     if (this.segments.length > 400) this.segments = this.segments.slice(-400);
     if (!seg.tr) {
@@ -191,7 +276,7 @@ export class ListenEngine {
     }
     this.record.endedAt = Date.now();
     this.record.messages = this.segments.map((s) => ({
-      id: s.id, uid: 'audio', name: '', lang: s.lang, text: s.text, mine: s.tr || s.text, ts: s.ts, own: false,
+      id: s.id, uid: s.voice !== null && s.voice !== undefined ? `voz${s.voice + 1}` : 'audio', name: s.voice !== null && s.voice !== undefined ? `Voz ${s.voice + 1}` : '', lang: s.lang, text: s.text, mine: s.tr || s.text, ts: s.ts, own: false,
     }));
     upsertHistory(this.record);
     if (flush) flushHistory();
@@ -200,6 +285,8 @@ export class ListenEngine {
   /** Empezar de cero (lo anterior queda en el historial). */
   reset() {
     this.save(true);
+    this.clusterer.reset();
+    this.lastVoice = null;
     this.segments = [];
     this.partial = { text: '', tr: '' };
     this.record = null;

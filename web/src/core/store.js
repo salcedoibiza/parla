@@ -19,7 +19,7 @@ export const DEFAULT_SETTINGS = {
   output: 'text', // text | voice | both
   autoSend: 'instant', // review | 3s | instant
   rate: 1.0,
-  readFrom: 'en',
+  readFrom: '', // vacío: detectar (app) o inglés (web)
   hotspot: { ssid: '', pass: '' },
   subSize: 26,
   v: 3,
@@ -53,6 +53,7 @@ function migrateSettings(s) {
   // v3: el mensaje se envía en cuanto terminas de hablar (antes esperaba 3 s)
   if (s.v < 3) {
     if (s.autoSend === '3s') s.autoSend = 'instant';
+    if (s.readFrom === 'en') s.readFrom = '';
     s.v = 3;
     save(KEY_SETTINGS, s);
   }

@@ -121,7 +121,7 @@ export function DialogView() {
 }
 
 // ---------- selector de idioma ----------
-export function LangSheet({ value, onPick, title, filter }) {
+export function LangSheet({ value, onPick, title, filter, auto = false }) {
   const [q, setQ] = useState('');
   const ui = uiLangId();
   const list = useMemo(() => {
@@ -136,6 +136,10 @@ export function LangSheet({ value, onPick, title, filter }) {
     <div class="lang-search">
       <input class="input" placeholder=${t('Buscar idioma')} value=${q} onInput=${(e) => setQ(e.target.value)} />
     </div>
+    ${auto && !q.trim() ? html`<button class=${`lang-item ${value === 'auto' ? 'on' : ''}`} onClick=${() => { closeSheet(); onPick('auto'); }}>
+      <span class="n">${t('Detectar idioma')}</span><span class="l">${t('automático')}</span>
+      ${value === 'auto' ? html`<${Icon} name="check" size=${20} />` : null}
+    </button>` : null}
     ${list.map((l) => html`<button class=${`lang-item ${l.id === value ? 'on' : ''}`} key=${l.id}
       onClick=${() => { closeSheet(); onPick(l.id); }}>
       <span class="n">${l.name}</span>
@@ -146,6 +150,7 @@ export function LangSheet({ value, onPick, title, filter }) {
 }
 
 export function langLabel(id) {
+  if (id === 'auto') return t('Detectar idioma');
   const l = langInfo(id);
   const local = localName(id, uiLangId());
   return local && local !== l.name ? local : l.name;
