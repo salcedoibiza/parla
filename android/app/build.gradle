@@ -1,0 +1,59 @@
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'com.android.application'
+}
+
+// La versión sale de package.json (la misma que la web)
+def pkg = new JsonSlurper().parse(rootProject.file('../package.json'))
+def ver = pkg.version as String
+def parts = ver.tokenize('.').collect { it as int }
+def code = parts[0] * 10000 + parts[1] * 100 + parts[2]
+
+android {
+    namespace 'app.parla.talk'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'app.parla.talk'
+        minSdk 24
+        targetSdk 34
+        versionCode code
+        versionName ver
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    // Lector de texto de Google (sin conexión, incluido en la app)
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+}

@@ -1,0 +1,11 @@
+node_modules/
+web/dist/
+out/
+build/
+keys/
+tools/harness/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/app/src/main/assets/www/

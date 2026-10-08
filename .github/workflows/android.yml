@@ -1,0 +1,75 @@
+name: Compilar app Android
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'web/src/**'
+      - 'web/public/**'
+      - 'package.json'
+      - 'tools/build.mjs'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Instalar dependencias de la web
+        run: npm ci --ignore-scripts --no-audit --no-fund
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - name: Compilar la web que va dentro de la app
+        run: |
+          node tools/build.mjs --app --web-base=https://salcedoibiza.github.io/parla/ --apk-url=https://salcedoibiza.github.io/parla/parla.apk
+          rm -rf android/app/src/main/assets/www
+          mkdir -p android/app/src/main/assets
+          cp -r web/dist android/app/src/main/assets/www
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Compilar APK
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace -p android assembleRelease 2>&1 | tee /tmp/gradle.log
+
+      - name: Guardar el APK (sin firmar) en la rama apk-build
+        if: always()
+        run: |
+          mkdir -p /tmp/out
+          if [ -f android/app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            cp android/app/build/outputs/apk/release/app-release-unsigned.apk /tmp/out/parla-unsigned.apk
+            echo ok > /tmp/out/STATUS
+          else
+            echo failed > /tmp/out/STATUS
+          fi
+          echo "${GITHUB_SHA}" > /tmp/out/SOURCE_SHA
+          tail -c 80000 /tmp/gradle.log > /tmp/out/build.log 2>/dev/null || echo "sin registro" > /tmp/out/build.log
+          cd /tmp/out
+          git init -q
+          git checkout -q -b apk-build
+          git add .
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -q -m "APK de ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" apk-build
