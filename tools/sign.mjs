@@ -1,18 +1,18 @@
-// Descarga el APK compilado en GitHub (rama apk-build), lo alinea y lo firma con la clave de Parla.
+// Descarga el APK compilado en GitHub (rama apk-build) y lo firma con la clave de Parla (keys/).
+// No hace falta el SDK de Android: firma v2 con tools/sign-v2.mjs (Node + OpenSSL + keytool).
 // Uso: node tools/sign.mjs   → out/Parla-<versión>.apk
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const site = process.env.PARLA_REPO || '/home/claude/parla-site';
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-const sh = (c, o = {}) => execSync(c, { stdio: ['ignore', 'pipe', 'inherit'], ...o }).toString();
+const sh = (c) => execSync(c, { cwd: root, stdio: ['ignore', 'pipe', 'inherit'] }).toString();
 
-sh(`git -C ${site} fetch -q origin apk-build`);
+sh('git fetch -q --depth 1 origin apk-build');
 const tmp = fs.mkdtempSync('/tmp/parla-apk-');
-sh(`git -C ${site} --work-tree=${tmp} checkout FETCH_HEAD -- .`);
-sh(`git -C ${site} reset -q`);
+sh(`git --work-tree=${tmp} checkout FETCH_HEAD -- .`);
+sh('git reset -q');
 const status = fs.readFileSync(path.join(tmp, 'STATUS'), 'utf8').trim();
 const src = fs.readFileSync(path.join(tmp, 'SOURCE_SHA'), 'utf8').trim();
 console.log('compilación', status, 'de', src);
@@ -21,10 +21,8 @@ if (status !== 'ok') {
   process.exit(1);
 }
 const ks = path.join(root, 'keys/parla-release.jks');
+const pass = fs.readFileSync(path.join(root, 'keys/password.txt'), 'utf8').trim();
 const out = path.join(root, `out/Parla-${pkg.version}.apk`);
 fs.mkdirSync(path.dirname(out), { recursive: true });
-sh(`zipalign -f -p 4 ${tmp}/parla-unsigned.apk ${tmp}/aligned.apk`);
-sh(`apksigner sign --ks ${ks} --ks-pass pass:parla-test-2026 --key-pass pass:parla-test-2026 --ks-key-alias parla --out ${out} ${tmp}/aligned.apk`);
-sh(`apksigner verify ${out}`);
-console.log(sh(`aapt dump badging ${out} | head -1`).trim());
+execFileSync('node', [path.join(root, 'tools/sign-v2.mjs'), path.join(tmp, 'parla-unsigned.apk'), out, ks, pass, 'parla'], { stdio: 'inherit' });
 console.log(`APK firmada → ${out} (${(fs.statSync(out).size / 1048576).toFixed(1)} MB)`);
