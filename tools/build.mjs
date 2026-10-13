@@ -58,6 +58,11 @@ fs.mkdirSync(path.join(dist, 'vendor'), { recursive: true });
 for (const f of ['tesseract.min.js', 'worker.min.js']) {
   fs.copyFileSync(path.join(root, 'node_modules/tesseract.js/dist', f), path.join(dist, 'vendor', f));
 }
+// Traductor dentro del dispositivo (Bergamot, MPL-2.0): motor en WebAssembly
+fs.mkdirSync(path.join(dist, 'vendor/bergamot'), { recursive: true });
+for (const f of ['bergamot-translator-worker.js', 'bergamot-translator-worker.wasm']) {
+  fs.copyFileSync(path.join(root, 'node_modules/@mkljczk/bergamot-translator/worker', f), path.join(dist, 'vendor/bergamot', f));
+}
 // El lector de texto para la web (en la app se usa el de Google, que va incluido)
 if (!args.app) {
   fs.mkdirSync(path.join(dist, 'vendor/core'), { recursive: true });

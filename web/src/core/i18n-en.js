@@ -207,7 +207,7 @@ export const EN = {
   'Sustituye el perfil de este móvil': "Replaces this phone's profile",
   'Crear cuenta con correo': 'Create account with email',
   'Próximamente': 'Coming soon',
-  'Parla es gratuita. Usa servicios gratuitos: el traductor web de Google, servidores públicos de mensajería (todo va cifrado de extremo a extremo) y el lector de texto Tesseract.': "Parla is free. It uses free services: Google's web translator, public messaging servers (everything is end-to-end encrypted) and the Tesseract text reader.",
+  'Parla es gratuita. Usa servicios gratuitos: el traductor web de Google, la traducción sin conexión de Google (ML Kit) y de Mozilla (modelos de Firefox Translations, licencia MPL-2.0), servidores públicos de mensajería (todo va cifrado de extremo a extremo) y el lector de texto Tesseract.': "Parla is free. It uses free services: Google's web translator, offline translation from Google (ML Kit) and Mozilla (Firefox Translations models, MPL-2.0 license), public messaging servers (everything is end-to-end encrypted) and the Tesseract text reader.",
   'Diagnóstico': 'Diagnostics',
   'Registro técnico por si algo falla': 'Technical log in case something goes wrong',
   'Quieren hablar': 'Want to speak',
@@ -309,7 +309,7 @@ export const EN = {
   "Descargando…": "Downloading…",
   "Hace falta para todos los idiomas": "Needed for every language",
   "Listo, funciona sin internet": "Ready, works offline",
-  "Unos 30 MB": "About 30 MB",
+  "Unos {mb} MB": "About {mb} MB",
   "Con los idiomas descargados, la traducción sale al momento y funciona sin internet. Cuando hay conexión, después se mejora con la de Google.": "With downloaded languages, translations appear instantly and work offline. When you are online, Google's translation then improves them.",
   "En tu móvil": "On your phone",
   "Para descargar": "Available to download",
@@ -318,4 +318,5 @@ export const EN = {
   "Descargar la app": "Download the app",
   "También funciona sin internet": "Also works offline",
   "El lector de textos está dentro de la app.": "The text reader is built into the app.",
+  "Se guardan en este navegador. Usan los modelos de traducción de Mozilla (los de Firefox): mejor descárgalos con wifi.": "They are saved in this browser. They use Mozilla's translation models (the ones in Firefox): better download them on Wi-Fi.",
 };

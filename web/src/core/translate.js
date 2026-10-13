@@ -3,7 +3,7 @@
 // si falla, se prueba a través de Android y después con alternativas gratuitas.
 import { native, onNative } from './native.js';
 import { log } from './log.js';
-import { canLocal, translateLocal } from './localtr.js';
+import { canLocal, translateLocal, translateLocalMany } from './localtr.js';
 
 const cache = new Map();
 const inflight = new Map();
@@ -179,6 +179,13 @@ export async function translateMany(text, sl, tls, timeoutMs = 6000) {
 
 /** Traduce una lista de frases cortas en pocas peticiones (una por línea). */
 export async function translateLines(lines, sl, tl) {
+  // Sin conexión, todas a la vez con el traductor del dispositivo
+  if (typeof navigator !== 'undefined' && navigator.onLine === false && canLocal(sl, tl)) {
+    try {
+      const out = await translateLocalMany(lines, sl, tl);
+      if (out.every((x) => x != null)) return out;
+    } catch { /* se intenta como siempre */ }
+  }
   const result = new Array(lines.length).fill(null);
   const BATCH = 35;
   for (let i = 0; i < lines.length; i += BATCH) {

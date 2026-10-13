@@ -2,7 +2,7 @@
 import { Utterance } from './speech.js';
 import { ensureMicPermission, native } from './native.js';
 import { translate, translateFast } from './translate.js';
-import { canLocal, translateLocal } from './localtr.js';
+import { canLocal, translateLocal, warmLocal } from './localtr.js';
 import { lang as langInfo, trCode } from './langs.js';
 import { upsertHistory, flushHistory } from './history.js';
 import { randomId } from './store.js';
@@ -49,6 +49,7 @@ export class ListenEngine {
   }
 
   async start() {
+    warmLocal(this.sl, this.tl);
     if (this.running) return true;
     const ok = await ensureMicPermission();
     if (!ok) { this.onError('permission'); return false; }

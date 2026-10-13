@@ -7,7 +7,7 @@ import {
 import { t } from '../core/i18n.js';
 import { Avatar, Topbar, Seg, Sheet, useStore, langLabel, QrCode, CameraView, Spinner, trLangName } from './common.js';
 import { isApp, openHotspotSettings, openVoiceSettings, share, copy, nativeInfo, openUrl } from '../core/native.js';
-import { hasLocalTr, onModels, refreshModels, modelsState, mlCode, downloadModel, deleteModel } from '../core/localtr.js';
+import { hasLocalTr, hasMlKit, onModels, refreshModels, modelsState, mlCode, downloadModel, deleteModel, modelMB, modelProgress } from '../core/localtr.js';
 import { LANGS, trCode } from '../core/langs.js';
 import { APP_VERSION, APK_URL, inviteLink } from '../core/config.js';
 import { clearLogs } from '../core/log.js';
@@ -129,6 +129,7 @@ export function OfflineScreen() {
   }, []);
   const st = modelsState();
   const myCode = mlCode(trCode(s.profile.lang));
+  // En la web no hace falta descargar el inglés
   const all = local && st.ready ? offlineLangs(st.supported) : [];
   const have = all.filter((l) => st.downloaded.has(l.code));
   const rest = all.filter((l) => !st.downloaded.has(l.code));
@@ -149,11 +150,12 @@ export function OfflineScreen() {
   const row = (l) => {
     const dl = st.downloading.has(l.code);
     const ok = st.downloaded.has(l.code);
+    const prog = dl ? modelProgress(l.code) : null;
     return html`<div class="row" key=${l.code}>
       <span class="ic" style=${ok ? 'color:var(--accent)' : ''}><${Icon} name=${ok ? 'check' : 'globe'} /></span>
       <span class="txt">
         <div class="t1">${l.name}</div>
-        <div class="t2">${dl ? t('Descargando…') : ok ? (l.code === 'en' ? t('Hace falta para todos los idiomas') : t('Listo, funciona sin internet')) : t('Unos 30 MB')}</div>
+        <div class="t2">${dl ? (prog != null ? `${t('Descargando…')} ${Math.round(prog * 100)} %` : t('Descargando…')) : ok ? (l.code === 'en' ? t('Hace falta para todos los idiomas') : t('Listo, funciona sin internet')) : t('Unos {mb} MB', { mb: modelMB(l.code) })}</div>
       </span>
       <span class="end">
         ${dl ? html`<${Spinner} size=${20} />` : ok
@@ -176,7 +178,9 @@ export function OfflineScreen() {
           <div class="group">${have.map(row)}</div>` : null}
           <div class="section-title">${t('Para descargar')}</div>
           <div class="group">${rest.map(row)}</div>
-          <p style="color:var(--text-3);font-size:13.5px;margin-top:12px">${t('El inglés se usa de puente entre idiomas, por eso hace falta siempre. Tu idioma y el inglés se descargan solos cuando estás con wifi.')}</p>
+          <p style="color:var(--text-3);font-size:13.5px;margin-top:12px">${hasMlKit()
+    ? t('El inglés se usa de puente entre idiomas, por eso hace falta siempre. Tu idioma y el inglés se descargan solos cuando estás con wifi.')
+    : t('Se guardan en este navegador. Usan los modelos de traducción de Mozilla (los de Firefox): mejor descárgalos con wifi.')}</p>
         `}
       ` : html`
         <div class="info-card accent" style="display:flex;gap:14px;align-items:flex-start">
@@ -376,7 +380,7 @@ export function AboutScreen() {
         <div style="color:var(--text-2)">${t('Versión de prueba')} ${APP_VERSION}</div>
       </div>
       <div class="info-card">
-        ${t('Parla es gratuita. Usa servicios gratuitos: el traductor web de Google, servidores públicos de mensajería (todo va cifrado de extremo a extremo) y el lector de texto Tesseract.')}
+        ${t('Parla es gratuita. Usa servicios gratuitos: el traductor web de Google, la traducción sin conexión de Google (ML Kit) y de Mozilla (modelos de Firefox Translations, licencia MPL-2.0), servidores públicos de mensajería (todo va cifrado de extremo a extremo) y el lector de texto Tesseract.')}
       </div>
       <div class="group">
         <button class="row" onClick=${() => setShowLogs(!showLogs)}><span class="ic"><${Icon} name="activity" /></span><span class="txt"><div class="t1">${t('Diagnóstico')}</div><div class="t2">${t('Registro técnico por si algo falla')}</div></span><span class="end"><${Icon} name=${showLogs ? 'down' : 'chevron'} size=${18} /></span></button>

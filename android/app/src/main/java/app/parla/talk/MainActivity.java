@@ -17,6 +17,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
 import android.webkit.PermissionRequest;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -97,6 +98,26 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageLoaded = true;
+            }
+
+            // Si el sistema cierra la parte web por falta de memoria (p. ej. con el traductor de
+            // Mozilla cargado en un móvil justo de memoria), se vuelve a abrir en vez de cerrar la app.
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                Log.w(TAG, "render process gone, crash=" + (detail != null && detail.didCrash()));
+                try {
+                    if (web != null) {
+                        web.setWebViewClient(new WebViewClient());
+                        web.setWebChromeClient(null);
+                        ((android.view.ViewGroup) web.getParent()).removeView(web);
+                        web.destroy();
+                        web = null;
+                    }
+                } catch (Throwable t) { }
+                runOnUiThread(new Runnable() {
+                    public void run() { recreate(); }
+                });
+                return true;
             }
         });
 

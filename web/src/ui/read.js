@@ -9,7 +9,7 @@ import {
   recognize, recognizeNative, nativeOcrSupports, hasNativeOcr, warmUpNativeOcr,
 } from '../core/ocr.js';
 import { translate, detectedLang } from '../core/translate.js';
-import { canLocal, translateLocal, mlCode } from '../core/localtr.js';
+import { canLocal, translateLocal, mlCode, warmLocal } from '../core/localtr.js';
 import { lang as langInfo, trCode } from '../core/langs.js';
 import { copy, share } from '../core/native.js';
 import { log } from '../core/log.js';
@@ -155,6 +155,7 @@ export function ReadScreen() {
   const showIntro = !store.settings.readIntro;
 
   useEffect(() => { if (useNative) warmUpNativeOcr(); }, [useNative]);
+  useEffect(() => { if (sl !== 'auto') warmLocal(sl, tl); }, [sl, tl]);
 
   useBackGuard(() => {
     if (phase === 'result') { setPhase('live'); setResult(null); return true; }

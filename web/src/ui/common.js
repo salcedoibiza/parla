@@ -4,7 +4,7 @@ import { Icon } from './icons.js';
 import { store, subscribe, closeSheet, toast } from '../core/store.js';
 import { t, uiLangId } from '../core/i18n.js';
 import { LANGS, localName, lang as langInfo, trCode } from '../core/langs.js';
-import { hasLocalTr, onModels, refreshModels, modelsState, missingFor, downloadModel, mlCode } from '../core/localtr.js';
+import { hasLocalTr, hasMlKit, onModels, refreshModels, modelsState, missingFor, downloadFor, missingMB, mlCode } from '../core/localtr.js';
 import { qrPath } from '../core/qr.js';
 import { startCamera, stopCamera, photoFromFile, photoFromVideo } from '../core/media.js';
 import { isApp, openAppSettings } from '../core/native.js';
@@ -281,6 +281,8 @@ export function LocalTrBanner({ langs }) {
   const st = useModels();
   const [, force] = useReducer((x) => x + 1, 0);
   if (!hasLocalTr() || !st.ready) return null;
+  // En la web solo se sugiere a quien ya ha descargado algún idioma (los modelos pesan bastante)
+  if (!hasMlKit() && !st.downloaded.size) return null;
   const trs = [...new Set(langs.filter(Boolean).map((id) => mlCode(trCode(id))))];
   // Si todos hablan el mismo idioma no hace falta traducir
   if (trs.length < 2) return null;
@@ -296,8 +298,8 @@ export function LocalTrBanner({ langs }) {
   }
   return html`<div class="banner accent tr-banner">
     <${Icon} name="bolt" size=${20} />
-    <span class="grow">${t('Descarga {langs} (unos {mb} MB) y la traducción saldrá al momento, también sin internet.', { langs: miss.map(trLangName).join(', '), mb: miss.length * 30 })}</span>
-    <button class="btn small" onClick=${() => { for (const c of miss) downloadModel(c, false); }}>${t('Descargar')}</button>
+    <span class="grow">${t('Descarga {langs} (unos {mb} MB) y la traducción saldrá al momento, también sin internet.', { langs: miss.map(trLangName).join(', '), mb: missingMB(trs) })}</span>
+    <button class="btn small" onClick=${() => downloadFor(trs)}>${t('Descargar')}</button>
     <button class="icon-btn" aria-label=${t('Cerrar')} onClick=${() => { dismissedTr.add(key); force(); }}><${Icon} name="x" size=${18} /></button>
   </div>`;
 }

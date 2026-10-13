@@ -2,7 +2,7 @@
 import { Channel, brokers, connectFastest } from './transport.js';
 import { deriveSession, randomCode, brokerOf, normalizeCode } from './crypto.js';
 import { translate, cachedTranslation, warmUp } from './translate.js';
-import { canLocal, translateLocal } from './localtr.js';
+import { canLocal, translateLocal, warmLocal } from './localtr.js';
 import { trCode } from './langs.js';
 import { upsertHistory, flushHistory } from './history.js';
 import { randomId } from './store.js';
@@ -322,6 +322,7 @@ export class Session extends Emitter {
       this.isHost = false;
     }
     this.state = st;
+    this.warmFor(st.langs);
     if (this.mode === 'conv' && st.host === this.me.uid && !this.isHost) {
       this.isHost = true;
       this.emit('host', true);
@@ -392,11 +393,18 @@ export class Session extends Emitter {
     }
   }
 
+  /** Deja preparado el traductor del dispositivo para el primer idioma que haya que traducir. */
+  warmFor(langs) {
+    const other = (langs || []).find((l) => l !== this.myTr);
+    if (other && other !== this.warmed) { this.warmed = other; warmLocal(other, this.myTr); }
+  }
+
   recomputeLangs() {
     if (!this.state) return;
     const langs = new Set([this.myTr]);
     for (const p of this.participants.values()) langs.add(trCode(p.lang));
     const arr = [...langs].sort();
+    this.warmFor(arr);
     if (arr.join(',') !== (this.state.langs || []).slice().sort().join(',')) {
       this.state = { ...this.state, langs: arr };
       this.publishState(400); // agrupa cambios si entran muchos oyentes a la vez
@@ -579,9 +587,11 @@ export class Session extends Emitter {
     };
     if (!item.own && trCode(m.lang) !== this.myTr && !(m.tr && m.tr[this.myTr]) && canLocal(trCode(m.lang), this.myTr)) {
       // Mientras llega la de Google, la traducción del móvil al momento
+      const t0 = Date.now();
       translateLocal(m.text, trCode(m.lang), this.myTr, 2000).then((txt) => {
+        log('local tr', Date.now() - t0, 'ms', finished ? '(tarde)' : '');
         if (!finished) { item.provisional = txt; this.changed(); }
-      }).catch(() => {});
+      }).catch((e) => log('local tr failed', e && e.message));
     }
     if (item.own || trCode(m.lang) === this.myTr) done(m.text);
     else if (m.tr && m.tr[this.myTr]) done(m.tr[this.myTr]);
